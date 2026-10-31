@@ -99,9 +99,11 @@ class BibleManager:
         ("로마서", 10, 17): "그러므로 **믿음은 들음에서 나며** 들음은 그리스도의 말씀으로 말미암았느니라"
     }
 
-    def __init__(self, db_path="bible.db"):
-        self.db_path = db_path
-        self.has_sqlite = os.path.exists(db_path)
+    def __init__(self, db_filename="bible.db"):
+        # Streamlit 클라우드 환경에서도 정확히 찾도록 절대 경로 지정
+        base_dir = os.path.dirname(os.path.abspath(__file__)) if '__file__' in globals() else os.getcwd()
+        self.db_path = os.path.join(base_dir, db_filename)
+        self.has_sqlite = os.path.exists(self.db_path)
 
     def normalize_book_name(self, raw_book: str) -> str:
         clean = raw_book.replace(" ", "").strip()
@@ -116,15 +118,17 @@ class BibleManager:
                 conn = sqlite3.connect(self.db_path)
                 cursor = conn.cursor()
                 cursor.execute(
-                    "SELECT verse, text FROM bible WHERE book=? AND chapter=? AND verse BETWEEN ? AND ? ORDER BY verse",
+                    "SELECT verse, content FROM bible WHERE book=? AND chapter=? AND verse BETWEEN ? AND ? AND version='개역개정' ORDER BY verse",
                     (canonical_book, chapter, verse_start, end_v)
                 )
                 rows = cursor.fetchall()
                 conn.close()
                 if rows:
                     return " ".join([f"({r[0]}) {r[1]}" if len(rows) > 1 else r[1] for r in rows])
-            except Exception:
-                pass
+                else:
+                    return f"[⚠️ 오류: DB에 '{canonical_book} {chapter}장 {verse_start}절' (개역개정) 데이터가 없습니다.]"
+            except Exception as e:
+                return f"[⚠️ DB 시스템 에러: {str(e)}]"
 
         result_texts = []
         for v in range(verse_start, end_v + 1):
@@ -137,25 +141,34 @@ class BibleManager:
                     result_texts.append(txt)
         if result_texts:
             return " ".join(result_texts)
-        return f"[{canonical_book} {chapter}장 {verse_start}절 본문 자동 보충 완료]"
+        
+        # 만약 여기까지 왔다면 DB 파일이 없거나 쿼리에 실패한 것임
+        if not self.has_sqlite:
+            return f"[⚠️ 오류: 'bible.db' 파일을 찾을 수 없습니다. GitHub에 함께 업로드(Commit) 되었는지 확인해주세요.]"
+        else:
+            return f"[⚠️ 오류: DB에서 '{canonical_book} {chapter}장 {verse_start}절'을 찾을 수 없습니다.]"
 
 bible_service = BibleManager()
 
 @st.cache_data(ttl=300, show_spinner=False)
 def fetch_supported_models(api_key: str):
-    if not api_key: return ["gemini-3.8-flash"]
+    if not api_key: return ["gemini-2.0-flash"]
     url = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
     try:
         req = urllib.request.Request(url, method="GET")
         with urllib.request.urlopen(req, timeout=8) as resp:
             data = json.loads(resp.read().decode("utf-8"))
             models = [m.get("name", "").replace("models/", "") for m in data.get("models", []) if "generateContent" in m.get("supportedGenerationMethods", []) and m.get("name")]
-            if "gemini-3.8-flash" in models:
-                models.remove("gemini-3.8-flash")
-                models.insert(0, "gemini-3.8-flash")
-            return models if models else ["gemini-3.8-flash"]
+            
+            # Sort models to prioritize 2.5-flash or flash-latest
+            priority = ["gemini-2.5-flash", "gemini-flash-latest", "gemini-2.5-pro"]
+            for p in reversed(priority):
+                if p in models:
+                    models.remove(p)
+                    models.insert(0, p)
+            return models if models else ["gemini-2.5-flash"]
     except Exception:
-        return ["gemini-3.8-flash", "gemini-2.0-flash"]
+        return ["gemini-2.5-flash", "gemini-pro-latest"]
 
 def extract_text_from_handwriting(image_bytes: bytes, mime_type: str, api_key: str, model_name: str) -> str:
     clean_model = model_name.replace("models/", "").strip()
@@ -174,7 +187,7 @@ def extract_text_from_handwriting(image_bytes: bytes, mime_type: str, api_key: s
     except Exception as e:
         raise RuntimeError(f"손글씨 인식 실패: {str(e)}")
 
-def analyze_sermon_with_gemini(script_text: str, api_key: str, model_name: str) -> dict:
+def analyze_sermon_with_gemini(script_text: str, api_key: str, model_name: str = "gemini-2.5-flash") -> dict:
     import time
     clean_model = model_name.replace("models/", "").strip()
     system_instruction = """당신은 기독교 설교학(Homiletics)과 교회 강단 프레젠테이션 디자인 전문가입니다.
@@ -198,7 +211,7 @@ def analyze_sermon_with_gemini(script_text: str, api_key: str, model_name: str) 
         "generationConfig": {"responseMimeType": "application/json", "temperature": 0.1, "thinkingConfig": {"thinkingBudget": 0}}
     }
     last_error = None
-    for current_model in [clean_model, "gemini-2.0-flash"]:
+    for current_model in [clean_model, "gemini-1.5-flash"]:
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{current_model}:generateContent?key={api_key}"
         req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"), headers={"Content-Type": "application/json"}, method="POST")
         for attempt in range(2):
@@ -357,11 +370,23 @@ if "script_input" not in st.session_state:
 with st.sidebar:
     st.header("⚙️ 분석 엔진 설정")
     engine_choice = st.radio("분석 모드 선택", ["🤖 AI 심층 분석 모드 (Gemini)", "⚡ 스마트 규칙 기반 모드 (오프라인)"])
-    api_key, selected_model = "", "gemini-3.8-flash"
+    api_key, selected_model = "", "gemini-2.5-flash"
     if "Gemini" in engine_choice:
         api_key = st.text_input("Gemini API Key", value=os.environ.get("GEMINI_API_KEY", ""), type="password")
-        model_options = list(dict.fromkeys(["gemini-3.8-flash"] + fetch_supported_models(api_key.strip())))
-        selected_model = st.selectbox("사용 모델", model_options, index=0)
+        
+        # API Key 입력 시 지원 모델 자동 조회
+        fetched_models = fetch_supported_models(api_key.strip())
+        
+        # 필수 안정화 모델 목록 강제 추가 + 중복 제거 + 직접 입력
+        base_models = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
+        model_options = list(dict.fromkeys(base_models + fetched_models + ["직접 입력"]))
+        
+        model_selection = st.selectbox("사용 모델", model_options, index=0)
+        
+        if model_selection == "직접 입력":
+            selected_model = st.text_input("모델명 직접 입력 (예: gemini-1.5-flash)", value="gemini-1.5-flash")
+        else:
+            selected_model = model_selection
 
 left_col, right_col = st.columns([1, 1])
 
@@ -401,7 +426,7 @@ with right_col:
     if "parsed_result" in st.session_state:
         res = st.session_state["parsed_result"]
         st.success(f"✅ 총 **{len(res.get('slides', []))}장** 슬라이드 생성 완료 (제목: {res.get('title')})")
-        st.download_button("📥 완성된 PPTX 다운로드 (경기천년제목 & 네이비)", data=build_sermon_pptx(res), file_name=f"{res.get('title', '설교자료')}.pptx", mime="application/vnd.openxmlformats-officedocument.presentationml.presentation", use_container_width=True)
+        st.download_button("📥 완성된 PPTX 다운로드 (경기천년제목 & 네이비)", data=build_sermon_pptx(res), file_name=f"{res.get('title') or '설교자료'}.pptx", mime="application/vnd.openxmlformats-officedocument.presentationml.presentation", use_container_width=True)
         with st.container(height=420):
             for idx, s in enumerate(res.get("slides", []), 1):
                 stype = s.get("type")
