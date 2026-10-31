@@ -328,39 +328,63 @@ def build_sermon_pptx(parsed_data: dict) -> io.BytesIO:
             rp = rbox.text_frame.paragraphs[0]
             rp.alignment = PP_ALIGN.CENTER
             format_run(rp.add_run(), item["reference"], 50, COLOR_GOLD, True)
-            bbox = slide.shapes.add_textbox(Inches(0.8), Inches(2.2), Inches(11.733), Inches(4.6))
+            
+            bbox = slide.shapes.add_textbox(Inches(0.5), Inches(2.0), Inches(12.333), Inches(5.0))
             btf = bbox.text_frame
-            btf.word_wrap = True  # 텍스트 박스 경계선 자동 줄바꿈(Word Wrap) 강제 활성화
+            btf.word_wrap = True
             bp = btf.paragraphs[0]
             bp.alignment = PP_ALIGN.CENTER
-            bp.line_spacing = 1.35
+            
             raw_text = item.get("text", "")
             
-            # [의미 단위 스마트 줄바꿈]: 여러 절이 있을 경우 절 번호 뒤에서 띄어쓰기 및 줄바꿈
-            raw_text = re.sub(r' (\(\d+\)) ', r'\n\n ', raw_text)
+            # 1. 절 번호 (예: (1), (2), 1절) 완전 삭제
+            raw_text = re.sub(r'\(\d+\)\s*', '', raw_text)
+            raw_text = re.sub(r'^\d+\s*', '', raw_text)
+            raw_text = re.sub(r'\s+', ' ', raw_text).strip()
             
-            # 주어(은,는,이,가)와 서술부 분리를 위한 가독성 줄바꿈 적용
+            # 2. 주어부/술어부 호흡 단위(Semantic) 스마트 줄바꿈
             chunked_lines = []
-            for line in raw_text.split("\n"):
-                words = line.split(" ")
-                current_chunk = ""
-                for word in words:
-                    current_chunk += word + " "
-                    # 어절이 어느정도 쌓였고(8자 이상), 조사가 주격/연결어미로 끝나면 의미 단위로 줄바꿈
-                    if len(current_chunk) >= 8 and re.search(r'(은|는|이|가|고|며)$', word.replace("**", "")):
-                        chunked_lines.append(current_chunk.strip())
-                        current_chunk = ""
-                if current_chunk:
+            words = raw_text.split(" ")
+            current_chunk = ""
+            for word in words:
+                current_chunk += word + " "
+                clean_word = word.replace("**", "")
+                
+                # 어절이 15자 이상 모였고, 끊어 읽기 좋은 조사/어미로 끝나면 줄바꿈
+                if len(current_chunk) >= 15 and re.search(r'(은|는|이|가|을|를|고|며|라|다|요|까|서|되|니)$', clean_word):
                     chunked_lines.append(current_chunk.strip())
+                    current_chunk = ""
+                # 너무 길어지면 강제 줄바꿈 (16:9 화면 이탈 방지)
+                elif len(current_chunk) >= 28:
+                    chunked_lines.append(current_chunk.strip())
+                    current_chunk = ""
+                    
+            if current_chunk.strip():
+                chunked_lines.append(current_chunk.strip())
             
-            # 정제된 텍스트로 덮어쓰기
             raw_text = "\n".join(chunked_lines)
+            
+            # 3. 줄 수에 따른 16:9 슬라이드 맞춤형 다이나믹 폰트/줄간격
+            line_count = len(chunked_lines)
+            if line_count >= 8:
+                dynamic_font_size = 32
+                bp.line_spacing = 1.15
+            elif line_count >= 6:
+                dynamic_font_size = 38
+                bp.line_spacing = 1.25
+            else:
+                dynamic_font_size = 46  # 짧은 구절은 크고 시원하게
+                bp.line_spacing = 1.4
+                
+            # 4. 노란색 강조 서식 적용하여 출력
             tokens = re.split(r'(\*\*.*?\*\*)', raw_text)
             for token in tokens:
                 if not token: continue
                 run = bp.add_run()
-                if token.startswith("**") and token.endswith("**"): format_run(run, token[2:-2], 44, COLOR_YELLOW, underline=True)
-                else: format_run(run, token, 44, COLOR_WHITE)
+                if token.startswith("**") and token.endswith("**"): 
+                    format_run(run, token[2:-2], dynamic_font_size, COLOR_YELLOW, underline=True)
+                else: 
+                    format_run(run, token, dynamic_font_size, COLOR_WHITE)
         elif stype == "MESSAGE":
             box = slide.shapes.add_textbox(Inches(0.8), Inches(2.6), Inches(11.733), Inches(2.5))
             p = box.text_frame.paragraphs[0]
