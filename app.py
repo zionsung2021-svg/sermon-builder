@@ -124,7 +124,7 @@ class BibleManager:
                 rows = cursor.fetchall()
                 conn.close()
                 if rows:
-                    return "\n".join([f"({r[0]}) {r[1]}" if len(rows) > 1 else r[1] for r in rows])
+                    return " ".join([r[1] for r in rows])
                 else:
                     return f"[⚠️ 오류: DB에 '{canonical_book} {chapter}장 {verse_start}절' (개역개정) 데이터가 없습니다.]"
             except Exception as e:
@@ -135,10 +135,7 @@ class BibleManager:
             key = (canonical_book, chapter, v)
             if key in self.BUILTIN_VERSES:
                 txt = self.BUILTIN_VERSES[key]
-                if verse_end and verse_end > verse_start:
-                    result_texts.append(f"({v}) {txt}")
-                else:
-                    result_texts.append(txt)
+                result_texts.append(txt)
         if result_texts:
             return "\n".join(result_texts)
         
