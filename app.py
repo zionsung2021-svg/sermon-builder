@@ -124,7 +124,7 @@ class BibleManager:
                 rows = cursor.fetchall()
                 conn.close()
                 if rows:
-                    return " ".join([f"({r[0]}) {r[1]}" if len(rows) > 1 else r[1] for r in rows])
+                    return "\n".join([f"({r[0]}) {r[1]}" if len(rows) > 1 else r[1] for r in rows])
                 else:
                     return f"[⚠️ 오류: DB에 '{canonical_book} {chapter}장 {verse_start}절' (개역개정) 데이터가 없습니다.]"
             except Exception as e:
@@ -140,7 +140,7 @@ class BibleManager:
                 else:
                     result_texts.append(txt)
         if result_texts:
-            return " ".join(result_texts)
+            return "\n".join(result_texts)
         
         # 만약 여기까지 왔다면 DB 파일이 없거나 쿼리에 실패한 것임
         if not self.has_sqlite:
@@ -332,9 +332,33 @@ def build_sermon_pptx(parsed_data: dict) -> io.BytesIO:
             rp.alignment = PP_ALIGN.CENTER
             format_run(rp.add_run(), item["reference"], 50, COLOR_GOLD, True)
             bbox = slide.shapes.add_textbox(Inches(0.8), Inches(2.2), Inches(11.733), Inches(4.6))
-            bp = bbox.text_frame.paragraphs[0]
-            bp.alignment, bp.line_spacing, bp.word_wrap = PP_ALIGN.CENTER, 1.35, True
-            tokens = re.split(r'(\*\*.*?\*\*)', item.get("text", ""))
+            btf = bbox.text_frame
+            btf.word_wrap = True  # 텍스트 박스 경계선 자동 줄바꿈(Word Wrap) 강제 활성화
+            bp = btf.paragraphs[0]
+            bp.alignment = PP_ALIGN.CENTER
+            bp.line_spacing = 1.35
+            raw_text = item.get("text", "")
+            
+            # [의미 단위 스마트 줄바꿈]: 여러 절이 있을 경우 절 번호 뒤에서 띄어쓰기 및 줄바꿈
+            raw_text = re.sub(r' (\(\d+\)) ', r'\n\n ', raw_text)
+            
+            # 주어(은,는,이,가)와 서술부 분리를 위한 가독성 줄바꿈 적용
+            chunked_lines = []
+            for line in raw_text.split("\n"):
+                words = line.split(" ")
+                current_chunk = ""
+                for word in words:
+                    current_chunk += word + " "
+                    # 어절이 어느정도 쌓였고(8자 이상), 조사가 주격/연결어미로 끝나면 의미 단위로 줄바꿈
+                    if len(current_chunk) >= 8 and re.search(r'(은|는|이|가|고|며)$', word.replace("**", "")):
+                        chunked_lines.append(current_chunk.strip())
+                        current_chunk = ""
+                if current_chunk:
+                    chunked_lines.append(current_chunk.strip())
+            
+            # 정제된 텍스트로 덮어쓰기
+            raw_text = "\n".join(chunked_lines)
+            tokens = re.split(r'(\*\*.*?\*\*)', raw_text)
             for token in tokens:
                 if not token: continue
                 run = bp.add_run()
