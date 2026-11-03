@@ -310,10 +310,25 @@ def build_sermon_pptx(parsed_data: dict) -> io.BytesIO:
         set_slide_background(slide)
         stype = item["type"]
         if stype == "TITLE":
+            # 제목 박스 양옆 여백을 0.8인치로 주고, word_wrap을 강제로 켭니다.
             box = slide.shapes.add_textbox(Inches(0.8), Inches(2.0), Inches(11.733), Inches(3.5))
-            p1 = box.text_frame.paragraphs[0]
+            tf = box.text_frame
+            tf.word_wrap = True
+            p1 = tf.paragraphs[0]
             p1.alignment = PP_ALIGN.CENTER
-            format_run(p1.add_run(), item["title"], 60, COLOR_GOLD)
+            
+            # 글자 수에 비례하여 폰트 크기를 더욱 유연하고 작게 조절 (화면 이탈 방지)
+            title_len = len(item["title"])
+            if title_len < 15:
+                title_font_size = 60
+            elif title_len < 20:
+                title_font_size = 50
+            elif title_len < 28:
+                title_font_size = 40
+            else:
+                title_font_size = 32
+                
+            format_run(p1.add_run(), item["title"], title_font_size, COLOR_GOLD)
             if item.get("subtitle"):
                 p2 = box.text_frame.add_paragraph()
                 p2.alignment, p2.space_before = PP_ALIGN.CENTER, Pt(20)
@@ -329,7 +344,8 @@ def build_sermon_pptx(parsed_data: dict) -> io.BytesIO:
             rp.alignment = PP_ALIGN.CENTER
             format_run(rp.add_run(), item["reference"], 50, COLOR_GOLD, True)
             
-            bbox = slide.shapes.add_textbox(Inches(0.5), Inches(2.0), Inches(12.333), Inches(5.0))
+            # 텍스트 박스 양옆 여백을 충분히 주어 16:9 비율에 맞게 꽉 차면서도 안정적으로 배치
+            bbox = slide.shapes.add_textbox(Inches(0.8), Inches(2.2), Inches(11.733), Inches(4.6))
             btf = bbox.text_frame
             btf.word_wrap = True
             bp = btf.paragraphs[0]
@@ -364,27 +380,38 @@ def build_sermon_pptx(parsed_data: dict) -> io.BytesIO:
             
             raw_text = "\n".join(chunked_lines)
             
-            # 3. 줄 수에 따른 16:9 슬라이드 맞춤형 다이나믹 폰트/줄간격
+            # 3. 줄 수 및 전체 글자 수에 따른 초정밀 다이나믹 폰트/줄간격
             line_count = len(chunked_lines)
-            if line_count >= 8:
+            total_chars = len(raw_text)
+            
+            # 절이 2절 이상이거나 글자 수가 100자가 넘어가는 매우 긴 구절
+            if line_count >= 10 or total_chars >= 120:
+                dynamic_font_size = 28
+                bp.line_spacing = 1.05
+            elif line_count >= 8 or total_chars >= 90:
                 dynamic_font_size = 32
                 bp.line_spacing = 1.15
-            elif line_count >= 6:
+            elif line_count >= 6 or total_chars >= 60:
                 dynamic_font_size = 38
                 bp.line_spacing = 1.25
             else:
-                dynamic_font_size = 46  # 짧은 구절은 크고 시원하게
+                dynamic_font_size = 46  # 짧은 1절 구절은 크고 시원하게
                 bp.line_spacing = 1.4
                 
             # 4. 노란색 강조 서식 적용하여 출력
+            # 별표(**) 좌우에 문장부호나 글자가 붙어있어도 완벽히 인식하도록 정규식 개선
+            # 예: "지극히 **작은 키**로써" -> split
             tokens = re.split(r'(\*\*.*?\*\*)', raw_text)
             for token in tokens:
                 if not token: continue
                 run = bp.add_run()
-                if token.startswith("**") and token.endswith("**"): 
-                    format_run(run, token[2:-2], dynamic_font_size, COLOR_YELLOW, underline=True)
+                if token.startswith("**") and token.endswith("**"):
+                    clean_highlight = token.replace("**", "")
+                    format_run(run, clean_highlight, dynamic_font_size, COLOR_YELLOW, underline=True)
                 else: 
-                    format_run(run, token, dynamic_font_size, COLOR_WHITE)
+                    # 남은 찌꺼기 ** 제거 (정규식 밖에서 혹시나 남은 경우)
+                    clean_text = token.replace("**", "")
+                    format_run(run, clean_text, dynamic_font_size, COLOR_WHITE)
         elif stype == "MESSAGE":
             box = slide.shapes.add_textbox(Inches(0.8), Inches(2.6), Inches(11.733), Inches(2.5))
             p = box.text_frame.paragraphs[0]
