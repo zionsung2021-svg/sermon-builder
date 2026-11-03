@@ -310,42 +310,40 @@ def build_sermon_pptx(parsed_data: dict) -> io.BytesIO:
         set_slide_background(slide)
         stype = item["type"]
         if stype == "TITLE":
-            # 제목 박스 양옆 여백을 0.8인치로 주고, word_wrap을 강제로 켭니다.
-            box = slide.shapes.add_textbox(Inches(0.8), Inches(2.0), Inches(11.733), Inches(3.5))
+            # 샘플 파일 기준 표지 텍스트 박스 위치 및 크기: Left 0.63, Width 12.08, Top 2.0
+            box = slide.shapes.add_textbox(Inches(0.63), Inches(2.0), Inches(12.08), Inches(3.5))
             tf = box.text_frame
             tf.word_wrap = True
             p1 = tf.paragraphs[0]
             p1.alignment = PP_ALIGN.CENTER
             
-            # 글자 수에 비례하여 폰트 크기를 더욱 유연하고 작게 조절 (화면 이탈 방지)
             title_len = len(item["title"])
-            if title_len < 15:
-                title_font_size = 60
-            elif title_len < 20:
-                title_font_size = 50
-            elif title_len < 28:
-                title_font_size = 40
-            else:
-                title_font_size = 32
-                
+            title_font_size = 66 if title_len < 18 else (56 if title_len < 25 else 48)
             format_run(p1.add_run(), item["title"], title_font_size, COLOR_GOLD)
+            
             if item.get("subtitle"):
                 p2 = box.text_frame.add_paragraph()
                 p2.alignment, p2.space_before = PP_ALIGN.CENTER, Pt(20)
                 format_run(p2.add_run(), item["subtitle"], 48, COLOR_WHITE)
+                
         elif stype == "MAIN_POINT":
-            box = slide.shapes.add_textbox(Inches(0.8), Inches(2.6), Inches(11.733), Inches(2.5))
-            p = box.text_frame.paragraphs[0]
+            # 샘플 파일 기준 대지 텍스트 박스 위치 및 크기: Left 0.63, Width 12.08, Top 2.67
+            box = slide.shapes.add_textbox(Inches(0.63), Inches(2.67), Inches(12.08), Inches(2.5))
+            tf = box.text_frame
+            tf.word_wrap = True
+            p = tf.paragraphs[0]
             p.alignment = PP_ALIGN.CENTER
             format_run(p.add_run(), item["point_header"], 64, COLOR_GOLD)
+            
         elif stype == "SCRIPTURE":
-            rbox = slide.shapes.add_textbox(Inches(0.8), Inches(0.8), Inches(11.733), Inches(1.2))
+            # 샘플 파일 기준 성구 참조(출처) 박스: Left 1.0, Width 11.33, Top 0.6, Size 50, Bold
+            rbox = slide.shapes.add_textbox(Inches(1.0), Inches(0.6), Inches(11.33), Inches(1.1))
             rp = rbox.text_frame.paragraphs[0]
             rp.alignment = PP_ALIGN.CENTER
             format_run(rp.add_run(), item["reference"], 50, COLOR_GOLD, True)
             
-            # 텍스트 박스 양옆 여백을 충분히 주어 16:9 비율에 맞게 꽉 차면서도 안정적으로 배치
-            bbox = slide.shapes.add_textbox(Inches(0.8), Inches(2.2), Inches(11.733), Inches(4.6))
+            # 샘플 파일 기준 본문 박스: Left 0.51, Width 12.31, Top 2.0, Size 48~40
+            bbox = slide.shapes.add_textbox(Inches(0.51), Inches(2.0), Inches(12.31), Inches(4.7))
             btf = bbox.text_frame
             btf.word_wrap = True
             bp = btf.paragraphs[0]
@@ -366,11 +364,11 @@ def build_sermon_pptx(parsed_data: dict) -> io.BytesIO:
                 current_chunk += word + " "
                 clean_word = word.replace("**", "")
                 
-                # 어절이 15자 이상 모였고, 끊어 읽기 좋은 조사/어미로 끝나면 줄바꿈
-                if len(current_chunk) >= 15 and re.search(r'(은|는|이|가|을|를|고|며|라|다|요|까|서|되|니)$', clean_word):
+                # 어절이 12자 이상 모였고, 끊어 읽기 좋은 조사/어미로 끝나면 줄바꿈 (샘플 파일의 촘촘한 호흡 반영)
+                if len(current_chunk) >= 12 and re.search(r'(은|는|이|가|을|를|고|며|라|다|요|까|서|되|니)$', clean_word):
                     chunked_lines.append(current_chunk.strip())
                     current_chunk = ""
-                # 너무 길어지면 강제 줄바꿈 (16:9 화면 이탈 방지)
+                # 강제 줄바꿈 한도 (16:9 화면 이탈 방지)
                 elif len(current_chunk) >= 28:
                     chunked_lines.append(current_chunk.strip())
                     current_chunk = ""
@@ -380,27 +378,24 @@ def build_sermon_pptx(parsed_data: dict) -> io.BytesIO:
             
             raw_text = "\n".join(chunked_lines)
             
-            # 3. 줄 수 및 전체 글자 수에 따른 초정밀 다이나믹 폰트/줄간격
+            # 3. 샘플 파일 기반 다이나믹 폰트/줄간격 (48pt ~ 40pt)
             line_count = len(chunked_lines)
             total_chars = len(raw_text)
             
-            # 절이 2절 이상이거나 글자 수가 100자가 넘어가는 매우 긴 구절
-            if line_count >= 10 or total_chars >= 120:
-                dynamic_font_size = 28
-                bp.line_spacing = 1.05
-            elif line_count >= 8 or total_chars >= 90:
-                dynamic_font_size = 32
+            if line_count >= 10 or total_chars >= 130:
+                dynamic_font_size = 36
                 bp.line_spacing = 1.15
-            elif line_count >= 6 or total_chars >= 60:
-                dynamic_font_size = 38
+            elif line_count >= 7 or total_chars >= 90:
+                dynamic_font_size = 40
                 bp.line_spacing = 1.25
+            elif line_count >= 5 or total_chars >= 60:
+                dynamic_font_size = 44
+                bp.line_spacing = 1.35
             else:
-                dynamic_font_size = 46  # 짧은 1절 구절은 크고 시원하게
-                bp.line_spacing = 1.4
+                dynamic_font_size = 48
+                bp.line_spacing = 1.45
                 
             # 4. 노란색 강조 서식 적용하여 출력
-            # 별표(**) 좌우에 문장부호나 글자가 붙어있어도 완벽히 인식하도록 정규식 개선
-            # 예: "지극히 **작은 키**로써" -> split
             tokens = re.split(r'(\*\*.*?\*\*)', raw_text)
             for token in tokens:
                 if not token: continue
@@ -409,14 +404,17 @@ def build_sermon_pptx(parsed_data: dict) -> io.BytesIO:
                     clean_highlight = token.replace("**", "")
                     format_run(run, clean_highlight, dynamic_font_size, COLOR_YELLOW, underline=True)
                 else: 
-                    # 남은 찌꺼기 ** 제거 (정규식 밖에서 혹시나 남은 경우)
                     clean_text = token.replace("**", "")
                     format_run(run, clean_text, dynamic_font_size, COLOR_WHITE)
+                    
         elif stype == "MESSAGE":
-            box = slide.shapes.add_textbox(Inches(0.8), Inches(2.6), Inches(11.733), Inches(2.5))
-            p = box.text_frame.paragraphs[0]
+            box = slide.shapes.add_textbox(Inches(0.63), Inches(2.67), Inches(12.08), Inches(2.5))
+            tf = box.text_frame
+            tf.word_wrap = True
+            p = tf.paragraphs[0]
             p.alignment = PP_ALIGN.CENTER
-            format_run(p.add_run(), item.get("text", ""), 50, COLOR_WHITE)
+            format_run(p.add_run(), item.get("text", ""), 48, COLOR_WHITE)
+            
     ppt_buffer = io.BytesIO()
     prs.save(ppt_buffer)
     ppt_buffer.seek(0)
